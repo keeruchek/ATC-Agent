@@ -1,108 +1,85 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>AI ATC Global Radar</title>
+    <title>AI ATC Neural Agent</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; background: #0b132b; color: #fff; font-family: 'Courier New', monospace; display: flex; flex-direction: column; height: 100vh; }
-        #main-container { display: flex; flex: 1; overflow: hidden; }
-        #map { flex: 1; background: #000; }
-        #sidebar { width: 400px; background: #1c2541; display: flex; flex-direction: column; border-left: 2px solid #3a506b; }
-        
-        /* Header & Selector */
-        .header { padding: 15px; background: #1c2541; border-bottom: 1px solid #3a506b; }
-        select { width: 100%; padding: 10px; background: #0b132b; color: #00ffcc; border: 1px solid #3a506b; font-family: monospace; }
-        
-        /* Flight List */
+        body { margin: 0; background: #0b132b; color: white; font-family: monospace; display: flex; height: 100vh; }
+        #map { flex: 1; }
+        #sidebar { width: 350px; background: #1c2541; display: flex; flex-direction: column; border-left: 2px solid #3a506b; }
         #flight-list { flex: 1; overflow-y: auto; padding: 10px; }
-        .flight-card { padding: 10px; margin-bottom: 8px; border-left: 6px solid; background: #0b132b; font-size: 12px; }
+        .card { padding: 10px; margin-bottom: 5px; background: #0b132b; border-left: 5px solid; font-size: 11px; }
+        .footer { padding: 10px; background: #1c2541; border-top: 1px solid #3a506b; }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 4px; }
+        button { font-size: 9px; cursor: pointer; background: #3a506b; color: white; border: none; padding: 4px; border-radius: 2px; }
+        #status-info { font-size: 10px; margin-top: 8px; color: #5dade2; height: 30px; }
         
-        /* Colors & Status */
-        .red { border-color: #ff4d4d; color: #ff4d4d; }
-        .yellow { border-color: #f1c40f; color: #f1c40f; }
-        .green { border-color: #2ecc71; color: #2ecc71; }
-        .white { border-color: #ffffff; color: #ffffff; }
-        .blue { border-color: #3498db; color: #3498db; }
-        .purple { border-color: #9b59b6; color: #9b59b6; }
-        .cyan { border-color: #1abc9c; color: #1abc9c; }
-
-        /* Footer Filters */
-        .footer { height: 80px; background: #1c2541; display: flex; align-items: center; justify-content: space-around; padding: 0 10px; border-top: 1px solid #3a506b; }
-        .filter-node { cursor: pointer; text-align: center; font-size: 10px; padding: 5px; border-radius: 4px; border: 1px solid transparent; }
-        .filter-node:hover { border-color: #5dade2; background: #0b132b; }
-        .dot { height: 12px; width: 12px; border-radius: 50%; display: block; margin: 0 auto 4px; }
+        .red { border-color: #ff4d4d; } .green { border-color: #2ecc71; }
+        .blue { border-color: #3498db; } .white { border-color: #ffffff; }
+        .purple { border-color: #9b59b6; } .cyan { border-color: #1abc9c; }
     </style>
 </head>
 <body>
-
-<div id="main-container">
     <div id="map"></div>
     <div id="sidebar">
-        <div class="header">
-            <h3>AI ATC AGENT</h3>
-            <p id="current-ap">Targeting: JFK</p>
-            <small>To switch airports: Change 'TARGET_AIRPORT' in GitHub Vars.</small>
+        <div style="padding:15px; background:#0b132b;">
+            <h3 style="margin:0">AI ATC AGENT</h3>
+            <div id="ap-focus" style="color:#00ffcc; font-size:12px">Neural Syncing...</div>
         </div>
         <div id="flight-list"></div>
+        <div class="footer">
+            <div class="btn-group">
+                <button onclick="filter('all')">ALL</button>
+                <button style="color:#ff4d4d" onclick="filter('red')">RISK</button>
+                <button style="color:#2ecc71" onclick="filter('green')">LAND</button>
+                <button style="color:#ffffff" onclick="filter('white')">DEPART</button>
+                <button style="color:#3498db" onclick="filter('blue')">READY</button>
+                <button style="color:#9b59b6" onclick="filter('purple')">TECH</button>
+            </div>
+            <div id="status-info">Click a category to filter the radar view.</div>
+        </div>
     </div>
-</div>
 
-<div class="footer">
-    <div class="filter-node" onclick="filterData('all')"><span class="dot" style="background:#5dade2"></span>ALL</div>
-    <div class="filter-node" onclick="filterData('red')"><span class="dot" style="background:#ff4d4d"></span>RISK</div>
-    <div class="filter-node" onclick="filterData('yellow')"><span class="dot" style="background:#f1c40f"></span>CAUTION</div>
-    <div class="filter-node" onclick="filterData('green')"><span class="dot" style="background:#2ecc71"></span>LANDING</div>
-    <div class="filter-node" onclick="filterData('white')"><span class="dot" style="background:#ffffff"></span>TAKEOFF</div>
-    <div class="filter-node" onclick="filterData('blue')"><span class="dot" style="background:#3498db"></span>READY</div>
-    <div class="filter-node" onclick="filterData('purple')"><span class="dot" style="background:#9b59b6"></span>TECH</div>
-</div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map', {zoomControl: false}).setView([0,0], 2);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        let allData = []; let layers = L.layerGroup().addTo(map);
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-    const map = L.map('map', { zoomControl: false }).setView([40.6413, -73.7781], 10);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        async function sync() {
+            const r = await fetch('./data.json?v=' + Date.now());
+            const d = await r.json();
+            allData = d.aircraft;
+            document.getElementById('ap-focus').innerText = `Focus: ${d.airport.name}`;
+            map.panTo([d.airport.lat, d.airport.lon]);
+            if(map.getZoom() < 10) map.setZoom(10);
+            render(allData);
+        }
 
-    let rawFlights = [];
-    let markers = L.layerGroup().addTo(map);
+        function render(flights) {
+            layers.clearLayers();
+            const list = document.getElementById('flight-list');
+            list.innerHTML = '';
+            flights.forEach(f => {
+                L.circleMarker([f.lat, f.lon], {color: f.color, radius: 6}).addTo(layers);
+                const item = document.createElement('div');
+                item.className = `card ${f.color}`;
+                item.innerHTML = `<b>${f.id}</b> - ${f.status}<br>ALT: ${Math.round(f.alt)}m`;
+                list.appendChild(item);
+            });
+        }
 
-    async function updateUI() {
-        const response = await fetch('./data.json?t=' + Date.now());
-        const data = await response.json();
-        rawFlights = data.aircraft;
-        
-        document.getElementById('current-ap').innerText = "Targeting: " + data.airport.name;
-        map.panTo([data.airport.lat, data.airport.lon]);
-        
-        renderList(rawFlights);
-    }
+        function filter(c) {
+            const desc = {
+                all: "Showing all flights.", red: "Collision hazard detected.",
+                green: "Flights on final landing approach.", white: "Flights in departure climb.",
+                blue: "Ready for pattern entry.", purple: "Mechanical/Emergency (Squawk 7700)."
+            };
+            document.getElementById('status-info').innerText = desc[c];
+            render(c === 'all' ? allData : allData.filter(f => f.color === c));
+        }
 
-    function renderList(flights) {
-        const list = document.getElementById('flight-list');
-        list.innerHTML = '';
-        markers.clearLayers();
-
-        flights.forEach(f => {
-            // Add to Sidebar
-            const card = document.createElement('div');
-            card.className = `flight-card ${f.color}`;
-            card.innerHTML = `<b>${f.id}</b> [${f.status}]<br>ALT: ${Math.round(f.alt)}m | VR: ${f.vr}`;
-            list.appendChild(card);
-
-            // Add to Map
-            L.circleMarker([f.lat, f.lon], { color: f.color, radius: 7, fillOpacity: 0.7 })
-             .addTo(markers).bindTooltip(f.id);
-        });
-    }
-
-    function filterData(color) {
-        if(color === 'all') return renderList(rawFlights);
-        const filtered = rawFlights.filter(f => f.color === color);
-        renderList(filtered);
-    }
-
-    setInterval(updateUI, 30000);
-    updateUI();
-</script>
+        setInterval(sync, 30000); sync();
+    </script>
 </body>
 </html>
