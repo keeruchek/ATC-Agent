@@ -1,0 +1,33 @@
+{
+    "airport": {
+        "lat": 40.6413,
+        "lon": -73.7781,
+        "name": "New York JFK"
+    },
+    "time": "Thu Feb 12 11:20:05 2026",
+    "count": 2,
+    "aircraft": [
+        {
+            "id": "AAL123",
+            "lon": -73.852,
+            "lat": 40.712,
+            "alt": 450,
+            "vr": -1.2,
+            "squawk": "1200",
+            "status": "LANDING",
+            "color": "green",
+            "cmd": ""
+        },
+        {
+            "id": "DAL456",
+            "lon": -73.790,
+            "lat": 40.650,
+            "alt": 8000,
+            "vr": 0.5,
+            "squawk": "7700",
+            "status": "EMERGENCY",
+            "color": "purple",
+            "cmd": "MAYDAY. Priority vectors assigned."
+        }
+    ]
+}
