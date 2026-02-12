@@ -1,53 +1,92 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>AI ATC Radar</title>
+    <meta charset="UTF-8">
+    <title>Global AI ATC Radar</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { background: #0b132b; color: white; font-family: monospace; display: flex; margin: 0; }
-        #map { height: 100vh; width: 75%; }
-        #sidebar { width: 25%; padding: 20px; overflow-y: auto; background: #1c2541; }
-        .flight-item { padding: 10px; border-bottom: 1px solid #3a506b; }
-        .red { color: #ff4d4d; } .yellow { color: #ffcc00; } .purple { color: #cc33ff; }
-        .blue { color: #33ccff; } .green { color: #33ff33; } .white { color: #ffffff; }
+        body { margin: 0; background: #0b132b; color: #5dade2; font-family: 'Courier New', monospace; display: flex; height: 100vh; }
+        #map { flex-grow: 1; background: #000; }
+        #sidebar { width: 350px; background: #1c2541; border-left: 2px solid #3a506b; display: flex; flex-direction: column; padding: 15px; }
+        h2 { color: #fff; border-bottom: 1px solid #3a506b; padding-bottom: 10px; font-size: 1.2em; }
+        .flight-card { padding: 10px; margin-bottom: 8px; border-radius: 4px; background: #0b132b; border-left: 5px solid; font-size: 0.85em; }
+        /* Your Requested Color Categories */
+        .red { border-color: #ff4d4d; color: #ff4d4d; }        /* At Risk */
+        .yellow { border-color: #f1c40f; color: #f1c40f; }     /* Potential Risk */
+        .blue { border-color: #3498db; color: #3498db; }       /* Ready to Land */
+        .white { border-color: #ffffff; color: #ffffff; }     /* Takeoff */
+        .green { border-color: #2ecc71; color: #2ecc71; }      /* Landing */
+        .purple { border-color: #9b59b6; color: #9b59b6; }     /* Mech Issue */
+        .cyan { border-color: #1abc9c; color: #1abc9c; }       /* En Route */
+        
+        .stats { font-size: 0.9em; margin-bottom: 15px; color: #fff; }
+        #flight-list { overflow-y: auto; flex-grow: 1; }
     </style>
 </head>
 <body>
+
     <div id="map"></div>
+    
     <div id="sidebar">
         <h2>AI ATC AGENT</h2>
-        <div id="flight-list">Scanning...</div>
+        <div class="stats" id="radar-stats">Initializing Radar...</div>
+        <div id="flight-list"></div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        const map = L.map('map').setView([40.6413, -73.7781], 10);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        const map = L.map('map', { zoomControl: false }).setView([40.6413, -73.7781], 10);
+        
+        // Dark Mode Radar Layer
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenSky'
+        }).addTo(map);
+
+        let markers = {};
 
         async function updateRadar() {
-            const response = await fetch('data.json');
-            const data = await response.json();
-            
-            document.getElementById('flight-list').innerHTML = '';
-            data.flights.forEach(f => {
-                // Draw plane on map
-                L.circleMarker([f.lat, f.lon], { color: f.color, radius: 8 }).addTo(map)
-                    .bindPopup(`ID: ${f.id}<br>Status: ${f.status}`);
+            try {
+                // Fetching the live data pushed by GitHub Actions
+                const response = await fetch('data.json?t=' + new Date().getTime());
+                const data = await response.json();
+                
+                document.getElementById('radar-stats').innerText = 
+                    `Airport: ${data.airport.name} | Tracking: ${data.count}`;
 
-                // Update Sidebar
-                const div = document.createElement('div');
-                div.className = `flight-item ${f.color}`;
-                div.innerHTML = `<b>${f.id}</b> - ${f.status} <br> Alt: ${f.alt}m`;
-                document.getElementById('flight-list').appendChild(div);
+                const list = document.getElementById('flight-list');
+                list.innerHTML = '';
 
-                // AI Voice Command
-                if (f.command) {
-                    const speech = new SpeechSynthesisUtterance(f.command);
-                    window.speechSynthesis.speak(speech);
-                }
-            });
+                data.aircraft.forEach(f => {
+                    // Update or Create Map Marker
+                    if (markers[f.id]) {
+                        markers[f.id].setLatLng([f.lat, f.lon]);
+                    } else {
+                        markers[f.id] = L.circleMarker([f.lat, f.lon], {
+                            radius: 7,
+                            fillOpacity: 0.8,
+                            color: f.color,
+                            fillColor: f.color
+                        }).addTo(map).bindTooltip(f.id, { permanent: true, direction: 'right' });
+                    }
+
+                    // Update Sidebar List
+                    const card = document.createElement('div');
+                    card.className = `flight-card ${f.color}`;
+                    card.innerHTML = `
+                        <strong>ID: ${f.id}</strong> [${f.status}]<br>
+                        ALT: ${Math.round(f.alt)}m | VR: ${f.vr}m/s<br>
+                        ${f.cmd ? `<i style="color:white">CMD: ${f.cmd}</i>` : ''}
+                    `;
+                    list.appendChild(card);
+                });
+            } catch (err) {
+                console.error("Radar Sync Error:", err);
+                document.getElementById('radar-stats').innerText = "Waiting for live data push...";
+            }
         }
-        setInterval(updateRadar, 30000); // Check for cloud updates every 30s
+
+        // Auto-refresh every 30 seconds to check for new GitHub data
+        setInterval(updateRadar, 30000);
         updateRadar();
     </script>
 </body>
