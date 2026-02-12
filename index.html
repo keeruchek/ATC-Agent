@@ -47,7 +47,7 @@
         async function updateRadar() {
             try {
                 // Fetching the live data pushed by GitHub Actions
-                const response = await fetch('data.json?t=' + new Date().getTime());
+                const response = await fetch('./data.json');
                 const data = await response.json();
                 
                 document.getElementById('radar-stats').innerText = 
