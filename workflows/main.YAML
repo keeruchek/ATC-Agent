@@ -2,25 +2,36 @@ name: ATC AI Agent Loop
 on:
   schedule:
     - cron: '*/5 * * * *' # Runs every 5 mins
-  workflow_dispatch: # Allows you to run it manually
+  workflow_dispatch:      # Allows you to click "Run Workflow" manually
 
 jobs:
   update-radar:
     runs-on: ubuntu-latest
+    # Explicitly grant permissions in the code as a backup
+    permissions:
+      contents: write
+    
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+
       - name: Install Dependencies
         run: pip install requests numpy
+
       - name: Run AI Agent
         run: python app.py
-      - name: Commit and Push
+        env:
+          ACTIVE_PORT: "JFK" # You can change this here easily
+
+      - name: Commit and Push Changes
         run: |
-          git config --global user.name "ATC-AI-Bot"
-          git config --global user.email "bot@atc.ai"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add data.json
-          git commit -m "AI Update: Airspace Scan" || exit 0
-          git push
+          # Only commit if the file actually changed to avoid errors
+          git diff --quiet && git diff --staged --quiet || (git commit -m "AI Update: Airspace Scan" && git push)
