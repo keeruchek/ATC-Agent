@@ -1,140 +1,129 @@
 import requests
 import numpy as np
 import time
-import matplotlib.pyplot as plt
 import os
 import json
 import warnings
 from urllib3.exceptions import NotOpenSSLWarning
 
-# Suppress the Mac LibreSSL warning
+# Clean up terminal warnings
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
 
-# --- 1. CONFIGURATION ---
-# [min_lat, min_lon, max_lat, max_lon]
-AREA = {'lamin': 40.0, 'lomin': -74.0, 'lamax': 41.0, 'lomax': -73.0}
+# --- 1. GLOBAL AIRPORT DATABASE ---
+# The AI Agent uses these coordinates to set the radar focus
+AIRPORTS = {
+    "JFK": {"lat": 40.6413, "lon": -73.7781, "name": "New York JFK"},
+    "LHR": {"lat": 51.4700, "lon": -0.4543, "name": "London Heathrow"},
+    "SIN": {"lat": 1.3644, "lon": 103.9915, "name": "Singapore Changi"},
+    "LAX": {"lat": 33.9416, "lon": -118.4085, "name": "Los Angeles Intl"},
+    "HND": {"lat": 35.5494, "lon": 139.7798, "name": "Tokyo Haneda"}
+}
 
-plt.ion()
-fig, ax = plt.subplots(figsize=(10, 8))
+# CONFIGURATION
+ACTIVE_PORT = "JFK"  # Change this to any key in AIRPORTS
+SCAN_RANGE = 1.0     # Degrees (~111km)
+MIN_LAT, MAX_LAT = AIRPORTS[ACTIVE_PORT]['lat'] - SCAN_RANGE, AIRPORTS[ACTIVE_PORT]['lat'] + SCAN_RANGE
+MIN_LON, MAX_LON = AIRPORTS[ACTIVE_PORT]['lon'] - SCAN_RANGE, AIRPORTS[ACTIVE_PORT]['lon'] + SCAN_RANGE
 
 def get_live_flights():
+    """Fetches and cleans data from OpenSky API"""
     url = "https://opensky-network.org/api/states/all"
+    params = {'lamin': MIN_LAT, 'lomin': MIN_LON, 'lamax': MAX_LAT, 'lomax': MAX_LON}
     try:
-        response = requests.get(url, params=AREA, timeout=10)
+        response = requests.get(url, params=params, timeout=10)
         data = response.json()
-        
-        flight_list = []
-        if data and 'states' in data and data['states']:
-            for s in data['states']:
-                # Index 0=ICAO, 5=Lon, 6=Lat, 7=Alt, 9=Velocity
-                if all(v is not None for v in [s[0], s[5], s[6], s[7], s[9]]):
-                    flight_list.append([s[0], s[5], s[6], s[7], s[9]])
-        
-        return np.array(flight_list)
+        return data.get('states', [])
     except Exception as e:
-        print(f"API Error: {e}")
-        return None
+        print(f"Connection Error: {e}")
+        return []
 
-def calculate_proximity(matrix):
-    n = len(matrix)
-    if n < 2: return None
-    dist_matrix = np.zeros((n, n))
+def calculate_3d_dist(p1, p2):
+    """Calculates horizontal distance in km and vertical in meters"""
+    # Horizontal (Haversine)
+    lon1, lat1 = np.radians(p1['lon']), np.radians(p1['lat'])
+    lon2, lat2 = np.radians(p2['lon']), np.radians(p2['lat'])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+    h_dist = 6371 * (2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a)))
+    
+    # Vertical
+    v_dist = abs(p1['alt'] - p2['alt'])
+    return h_dist, v_dist
+
+def issue_ai_command(callsign, instruction, priority="Normal"):
+    """Voice synthesis for the AI Agent"""
+    prefix = "Immediate" if priority == "High" else ""
+    msg = f"{prefix} Instruction for {callsign}: {instruction}"
+    print(f"🎙️ AI AGENT: {msg}")
+    os.system(f'say -v Samantha "{msg}" &')
+
+def process_airspace():
+    states = get_live_flights()
+    processed_flights = []
+    
+    # 1. Parse raw data into clean dictionaries
+    for s in states:
+        # Index map: 0:icao, 1:callsign, 5:lon, 6:lat, 7:alt, 9:vel, 11:vert_rate, 14:squawk
+        if all(v is not None for v in [s[0], s[5], s[6], s[7], s[9]]):
+            processed_flights.append({
+                "id": s[1].strip() if s[1] else s[0],
+                "lon": float(s[5]),
+                "lat": float(s[6]),
+                "alt": float(s[7]),
+                "vel": float(s[9]),
+                "vr": float(s[11]) if s[11] else 0,
+                "squawk": s[14],
+                "status": "EN_ROUTE",
+                "color": "cyan"
+            })
+
+    # 2. Analyze Phase and Risks (AI Reasoning)
+    n = len(processed_flights)
     for i in range(n):
-        # Index 1 is Lon, Index 2 is Lat
-        lon1 = np.radians(float(matrix[i][1])) 
-        lat1 = np.radians(float(matrix[i][2]))
+        p = processed_flights[i]
+        
+        # CATEGORY LOGIC
+        if p['squawk'] in ['7700', '7600', '7500']:
+            p['status'], p['color'] = "EMERGENCY", "purple"
+            issue_ai_command(p['id'], "declare emergency, priority landing cleared", "High")
+        elif p['alt'] < 500:
+            if p['vr'] < -0.5: p['status'], p['color'] = "LANDING", "green"
+            elif p['vr'] > 0.5: p['status'], p['color'] = "TAKEOFF", "white"
+        elif p['alt'] < 3000 and p['vr'] < -1.0:
+            p['status'], p['color'] = "READY_TO_LAND", "blue"
+
+        # PROXIMITY CHECK (Conflict Detection)
         for j in range(i + 1, n):
-            lon2 = np.radians(float(matrix[j][1]))
-            lat2 = np.radians(float(matrix[j][2]))
+            p2 = processed_flights[j]
+            h_dist, v_dist = calculate_3d_dist(p, p2)
             
-            dlat, dlon = lat2 - lat1, lon2 - lon1
-            a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
-            distance = 6371 * (2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a)))
-            dist_matrix[i, j] = dist_matrix[j, i] = round(distance, 2)
-    return dist_matrix
+            # Loss of Separation: < 5km Horizontal AND < 300m (1000ft) Vertical
+            if h_dist < 5.0 and v_dist < 300:
+                p['status'] = p2['status'] = "AT_RISK"
+                p['color'] = p2['color'] = "red"
+                issue_ai_command(p['id'], f"Traffic conflict. Climb immediately to avoid {p2['id']}", "High")
+            elif h_dist < 12.0 and v_dist < 600:
+                if p['status'] != "AT_RISK": 
+                    p['status'], p['color'] = "POTENTIAL_RISK", "yellow"
 
-def issue_command(id1, id2, dist):
-    msg = f"Alert. Traffic conflict between {id1} and {id2}. Distance {dist} kilometers."
-    print(f"🎙️ AGENT: {msg}")
-    # Mac 'say' command for the AI voice
-    os.system(f'say -v Samantha "{msg}" &') 
-
-class HistoryBuffer:
-    def __init__(self):
-        self.history = {} # Key: ICAO, Value: [lat, lon, timestamp]
-
-    def update_and_get_vector(self, icao, lon, lat):
-        current_time = time.time()
-        if icao in self.history:
-            prev_lon, prev_lat, prev_time = self.history[icao]
-            dt = current_time - prev_time
-            if dt > 0:
-                d_lon = (float(lon) - float(prev_lon)) / dt
-                d_lat = (float(lat) - float(prev_lat)) / dt
-                self.history[icao] = [lon, lat, current_time]
-                return d_lon, d_lat
-        self.history[icao] = [lon, lat, current_time]
-        return 0.0, 0.0
-
-# Initialize AI Memory
-hb = HistoryBuffer()
+    return processed_flights
 
 if __name__ == "__main__":
-    print("🚀 Starting ATC AI Agent...")
+    print(f"📡 ATC AI AGENT ONLINE: Monitoring {AIRPORTS[ACTIVE_PORT]['name']}")
     
     while True:
-        raw_data = get_live_flights()
+        flights = process_airspace()
         
-        if raw_data is not None and len(raw_data) > 0:
-            print(f"\n--- Scanning Airspace: {len(raw_data)} Aircraft ---")
+        # Save to JSON for GitHub Pages
+        web_payload = {
+            "airport": AIRPORTS[ACTIVE_PORT],
+            "timestamp": time.time(),
+            "count": len(flights),
+            "flights": flights
+        }
+        
+        with open("data.json", "w") as f:
+            json.dump(web_payload, f, indent=4)
             
-            # --- 1. DATA PREP ---
-            lons = raw_data[:, 1].astype(float)
-            lats = raw_data[:, 2].astype(float)
-            ids = raw_data[:, 0]
-
-            # --- 2. VISUALIZATION ---
-            ax.clear()
-            ax.set_facecolor('#0b132b') # Dark Radar Blue
-            ax.grid(True, color='#1c2541', linestyle='--')
-            
-            # Plot planes
-            ax.scatter(lons, lats, c='cyan', marker='^', s=100, edgecolors='white')
-            
-            # Add labels for IDs
-            for i, txt in enumerate(ids):
-                ax.annotate(txt, (lons[i], lats[i]), color='white', fontsize=8, xytext=(5,5), textcoords='offset points')
-
-            ax.set_xlim(AREA['lomin'], AREA['lomax'])
-            ax.set_ylim(AREA['lamin'], AREA['lamax'])
-            ax.set_title(f"ATC RADAR ACTIVE - {time.strftime('%H:%M:%S')}", color='red')
-            plt.draw()
-            plt.pause(0.1)
-
-            # --- 3. PROXIMITY & AGENT LOGIC ---
-            distance = calculate_proximity(raw_data)
-            current_conflicts = []
-
-            if distance is not None:
-                conflicts = np.where((distance < 10) & (distance > 0))
-                pairs = zip(conflicts[0], conflicts[1])
-                
-                for i, j in pairs:
-                    if i < j:
-                        id1, id2 = ids[i], ids[j]
-                        dist = distance[i, j]
-                        print(f"⚠️ CONFLICT: {id1} | {id2} | {dist}km")
-                        issue_command(id1, id2, dist)
-                        current_conflicts.append({"p1": id1, "p2": id2, "dist": dist})
-
-            # --- 4. EXPORT FOR GITHUB PAGES ---
-            web_data = {
-                "last_update": time.strftime('%Y-%m-%d %H:%M:%S'),
-                "count": len(raw_data),
-                "aircraft": raw_data.tolist(),
-                "conflicts": current_conflicts
-            }
-            with open("data.json", "w") as f:
-                json.dump(web_data, f)
-
+        print(f"--- Scan Complete: {len(flights)} aircraft tracked ---")
         time.sleep(10)
